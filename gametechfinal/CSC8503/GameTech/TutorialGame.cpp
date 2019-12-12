@@ -8,6 +8,11 @@
 
 #include "../CSC8503Common/PositionConstraint.h"
 
+#include "../CSC8503Common/StateMachine.h"
+#include "../CSC8503Common/StateTransition.h"
+#include "../CSC8503Common/State.h"
+
+
 using namespace NCL;
 using namespace CSC8503;
 
@@ -18,11 +23,18 @@ TutorialGame::TutorialGame() {
 
 	forceMagnitude = 10.0f;
 	useGravity = false;
-	inSelectionMode = false;
+	inSelectionMode = true;
+	Window::GetWindow()->ShowOSPointer(true);
+	Window::GetWindow()->LockMouseToWindow(false);
 
 	Debug::SetRenderer(renderer);
 
+	NetworkBase::Initialise();
+	isServer = false;
+	isClient = false;
+
 	InitialiseAssets();
+	start = false;
 }
 
 /*
@@ -64,14 +76,25 @@ TutorialGame::~TutorialGame() {
 	delete physics;
 	delete renderer;
 	delete world;
+
+	if (isNetworked) {
+		NetworkBase::Destroy();
+		delete server;
+		delete serverReceiver;
+		delete client;
+		delete clientReceiver;
+	}
 }
 
 void TutorialGame::UpdateGame(float dt) {
 
+	if (isNetworked) {
+		sentPackets(isServer);
+	}
+
 	if ((lockedObject = goose) != nullptr) {
 		LockedCameraMovement();
 	}
-
 	UpdateKeys();
 
 	if (useGravity) {
@@ -84,16 +107,15 @@ void TutorialGame::UpdateGame(float dt) {
 
 	SelectObject();
 	MoveSelectedObject();
-	if (collected) {
-		MoveAI();
-	}
+	MoveAI();
+
 	world->UpdateWorld(dt);
 	renderer->Update(dt);
 	physics->Update(dt);
 	if (!inSelectionMode) {
 		world->GetMainCamera()->UpdateCamera(dt);
 	}
-
+	
 	Debug::FlushRenderables();
 	renderer->Render();
 }
@@ -102,6 +124,7 @@ void TutorialGame::UpdateKeys() {
 	if (Window::GetKeyboard()->KeyPressed(KeyboardKeys::F1)) {
 		InitWorld(); //We can reset the simulation at any time with F1
 		selectionObject = nullptr;
+		collected = false;
 	}
 
 	if (Window::GetKeyboard()->KeyPressed(KeyboardKeys::F2)) {
@@ -166,7 +189,7 @@ void TutorialGame::LockedObjectMovement() {
 	}
 	if (Window::GetKeyboard()->KeyDown(KeyboardKeys::SPACE)) {
 		goose->GetPhysicsObject()->AddForce(Vector3(0, 50, 0));
-	
+
 	}
 
 	trigger->GetTransform().SetParent(&lockedObject->GetTransform());
@@ -177,64 +200,158 @@ void TutorialGame::LockedObjectMovement() {
 	}
 
 	if (Window::GetKeyboard()->KeyDown(KeyboardKeys::E)) {
-	//	collected = !collected;
-			if (collectApple(fwdAxis) && (!collected)) {
-				collected = true;
-				targetObject->GetTransform().SetParent(&goose->GetTransform());
-				targetObject->GetTransform().SetLocalPosition(Vector3(0, 2, 0));
-				targetObject->GetPhysicsObject()->previousMass = targetObject->GetPhysicsObject()->GetInverseMass();
-				targetObject->GetPhysicsObject()->SetInverseMass(0);
-				pickedUpObject = targetObject;
-			//	points++;////////////////////if apple in base's range, points ++
-			}
-		//else {
-		//		collected = false;
-		//}
+		if (collectApple(fwdAxis) && (!collected)) {
+			collected = true;
+			targetObject->GetTransform().SetParent(&goose->GetTransform());
+			targetObject->GetTransform().SetLocalPosition(Vector3(0, 4, 0));
+			targetObject->GetPhysicsObject()->previousMass = targetObject->GetPhysicsObject()->GetInverseMass();
+			targetObject->GetPhysicsObject()->SetInverseMass(0);
+			pickedUpObject = targetObject;
+		}
 	}
 	if (Window::GetKeyboard()->KeyDown(KeyboardKeys::R)) {
 
-			collected=false;
-			if (pickedUpObject) {
-				for (GameObject* obj : physics->GetTrigerList()) {
-					if (obj->GetName() == "base") {
-						points++;
-					}
+		collected = false;
+		if (pickedUpObject) {
+			for (GameObject* obj : physics->GetTrigerList()) {
+				if (obj->GetName() == "base") {
+					points++;
 				}
-				pickedUpObject->GetTransform().SetParent(nullptr);
-				pickedUpObject->GetPhysicsObject()->SetInverseMass(pickedUpObject->GetPhysicsObject()->previousMass);
-				pickedUpObject->GetTransform().SetWorldPosition(goose->GetTransform().GetWorldPosition() + fwdAxis*2);
-			//	CollisionDetection::CollisionInfo info;
-				//if (CollisionDetection::ObjectIntersection(HomeBase, pickedUpObject, info)) {
-				//	points++;
-				//}
-				pickedUpObject = nullptr;
 			}
+			pickedUpObject->GetTransform().SetParent(nullptr);
+			pickedUpObject->GetPhysicsObject()->SetInverseMass(pickedUpObject->GetPhysicsObject()->previousMass);
+			pickedUpObject->GetTransform().SetWorldPosition(goose->GetTransform().GetWorldPosition() + fwdAxis * 2);
+			pickedUpObject = nullptr;
+		}
 	}
 }
-vector<Vector3> testNodes;
-float lerp(float v0, float v1, float t) {
-	return (1 - t) * v0 + t * v1;
+void TutorialGame::Server() {
+	int port = NetworkBase::GetDefaultPort();
+
+	serverReceiver = new TestPacketReceiver("server");
+	server = new GameServer(port, 1);
+	server->RegisterPacketHandler(String_Message, serverReceiver);
+	
 }
+void TutorialGame::Client() {
+	
+	int port = NetworkBase::GetDefaultPort();
+	
+	clientReceiver = new TestPacketReceiver("client");
+	client = new GameClient();
+	client->RegisterPacketHandler(String_Message, clientReceiver);
+	clientConnected = client->Connect(127, 0, 0, 1, port);
+	
+}
+
+void TutorialGame::sentPackets(bool s) {
+	if (s) {
+		server->SendGlobalPacket(StringPacket("helloo im server"));
+		server->UpdateServer();
+	}
+	else {
+		client->SendPacket(StringPacket("hello im client"));
+		client->UpdateClient();
+	}
+}
+
 void TutorialGame::MoveAI() {
 	NavigationGrid grid("TestGrid1.txt");
 	NavigationPath outPath;
 	bool found = grid.FindPath(keeper->GetTransform().GetWorldPosition(), goose->GetTransform().GetWorldPosition(), outPath);
 
-	Vector3 pos;
-	while (outPath.PopWaypoint(pos)) {
-		testNodes.push_back(pos);
+	vector<Vector3> AIdefault;
+	AIdefault.push_back(Vector3(50, 0, 50));
+	AIdefault.push_back(Vector3(10, 0, 10));
+	AIdefault.push_back(Vector3(55, 0, 40));
+	AIdefault.push_back(Vector3(65, 0, 95));
+
+	tempo += 0.01f;
+	if (!found || !collected) {
+			keeper->GetTransform().SetWorldPosition(Vector3(lerp(keeper->GetTransform().GetWorldPosition().x, AIdefault[i].x, 0.003f),
+			lerp(keeper->GetTransform().GetWorldPosition().y, AIdefault[i].y, 0.003f),
+			lerp(keeper->GetTransform().GetWorldPosition().z, AIdefault[i].z, 0.003f)));
+			//lerp stuff----->must remove lerp and replace with forces!!->>> ASK RICH 
+		if (tempo >= 2.0f) {
+			i++;
+			tempo = 0.0f;
+		}
+		if (i >= AIdefault.size()) {
+			i = 0;
+		}
+		// SHOULD BE STATE A OF STATE-MACHINE
+	}
+	else {
+		Vector3 pos;
+		while (outPath.PopWaypoint(pos)) {
+			testNodes.push_back(pos);
+		}
+
+		for (int i = 1; i < testNodes.size(); ++i) {
+			Vector3 a = testNodes[i - 1];
+			Vector3 b = testNodes[i];
+			///replace lerp with forces ->>> 
+			keeper->GetTransform().SetWorldPosition(Vector3(lerp(keeper->GetTransform().GetWorldPosition().x, a.x, 0.003f),
+															lerp(keeper->GetTransform().GetWorldPosition().y, a.y, 0.003f),
+															lerp(keeper->GetTransform().GetWorldPosition().z, a.z, 0.003f)));
+
+		}
+		// SHOULD BE STATE B OF STATE-MACHINE
 	}
 
-	for (int i = 1; i < testNodes.size(); ++i) {
-		Vector3 a = testNodes[i - 1];
-		Vector3 b = testNodes[i];
-
-		keeper->GetTransform().SetWorldPosition(Vector3(lerp(keeper->GetTransform().GetWorldPosition().x, a.x, 0.003f),
-														lerp(keeper->GetTransform().GetWorldPosition().y, a.y, 0.003f),
-														lerp(keeper->GetTransform().GetWorldPosition().z, a.z, 0.003f)));
-		////Debug::DrawLine(a + Vector3(0, 3, 0), b + Vector3(0, 3, 0), Vector4(0, 1, 0, 1));
-	}
 }
+
+//struct dataPassing
+//{
+//	GameObject* actualObject;
+//	bool* found;
+//	int* eventID;
+//};
+/////////////////////////////////state machine AI
+//void TutorialGame::TestStateMachine() {
+//	StateMachine* testMachine = new StateMachine();
+//
+//	StateFunc AFunc = [](void* data) {
+//		dataPassing* realData = (dataPassing*)data;
+//		realData->actualObject->GetPhysicsObject()->AddForce(Vector3(5, 0, 0));
+//		if (realData->found) {
+//			*realData->eventID = 20;
+//		}
+//		std::cout << "in state A" << std::endl;
+//	};
+//	StateFunc BFunc = [](void* data) {
+//		dataPassing* realData = (dataPassing*)data;
+//		realData->actualObject->GetPhysicsObject()->AddForce(Vector3(-5, 0, 0));
+//		if (!(realData->found)) {
+//			*realData->eventID = 0;
+//		}
+//		std::cout << "in state B" << std::endl;
+//	};
+//
+//	dataPassing idle{ keeper , found, &eventData };
+//	dataPassing chasing{ keeper,found, &eventData };
+//
+//	GenericState* stateA = new GenericState(AFunc, (void*)& idle);
+//	GenericState* stateB = new GenericState(BFunc, (void*)& chasing);
+//	testMachine->AddState(stateA);
+//	testMachine->AddState(stateB);
+//
+//	GenericTransition<int&, int>* transitionA =
+//		new GenericTransition<int&, int>(GenericTransition<int&, int>::GreaterThanTransition, eventData, 10, stateA, stateB); // if greater than10, a to b
+//
+//	GenericTransition<int&, int>* transitionB =
+//		new GenericTransition<int&, int>(GenericTransition<int&, int>::EqualsTransition, eventData, 0, stateB, stateA); // if == 0, b to a
+//
+//	testMachine->AddTransition(transitionA);
+//	testMachine->AddTransition(transitionB);
+//
+//	//for (int i = 0; i < 100; ++i) {
+//	testMachine->Update(); //run the state machine
+////}
+//	//delete testMachine;
+//}
+///////////////////////////////
+
 
 bool TutorialGame::collectApple(Vector3 fwdAxis) {
 	Vector3 testDir = fwdAxis;
@@ -246,7 +363,6 @@ bool TutorialGame::collectApple(Vector3 fwdAxis) {
 	if (world->Raycast(detectForward, closestCollision1, true) && closestCollision1.collidedAt.z < lockedObject->GetTransform().GetLocalPosition().z + 10) {
 		targetObject = (GameObject*)closestCollision1.node;
 		if (targetObject->GetName() == "apple") {
-			//	targetObject->GetTransform().SetLocalPosition(goose->GetTransform().GetLocalPosition() + Vector3(0,5,0));
 			return true;
 		}
 		else {
@@ -260,22 +376,65 @@ bool TutorialGame::collectApple(Vector3 fwdAxis) {
 
 void  TutorialGame::LockedCameraMovement() {
 	if (lockedObject != nullptr) {
-		Vector3 objPos = lockedObject->GetTransform().GetWorldPosition();
-		Vector3 camPos = objPos + lockedObject->GetConstTransform().GetWorldOrientation() * lockedOffset;
+		if (start) {
+			Vector3 objPos = lockedObject->GetTransform().GetWorldPosition();
+			Vector3 camPos = objPos + lockedObject->GetConstTransform().GetWorldOrientation() * lockedOffset;
 
-		camPos = (Matrix4::Translation(objPos) * Matrix4::Rotation(180, Vector3{ 0,1,0 }) * Matrix4::Translation(-objPos)) * camPos;
+			camPos = (Matrix4::Translation(objPos) * Matrix4::Rotation(180, Vector3{ 0,1,0 }) * Matrix4::Translation(-objPos)) * camPos;
 
-		Matrix4 temp = Matrix4::BuildViewMatrix(camPos, objPos, Vector3(0, 1, 0));
+			Matrix4 temp = Matrix4::BuildViewMatrix(camPos, objPos, Vector3(0, 1, 0));
 
-		Matrix4 modelMat = temp.Inverse();
+			Matrix4 modelMat = temp.Inverse();
 
-		Quaternion q(modelMat);
-		Vector3 angles = q.ToEuler(); //nearly there now!
+			Quaternion q(modelMat);
+			Vector3 angles = q.ToEuler(); //nearly there now!
 
-		world->GetMainCamera()->SetPosition(camPos);
-		world->GetMainCamera()->SetPitch(angles.x);
-		world->GetMainCamera()->SetYaw(angles.y);
+			world->GetMainCamera()->SetPosition(camPos);
+			world->GetMainCamera()->SetPitch(angles.x);
+			world->GetMainCamera()->SetYaw(angles.y);
+		}
+		else {
+			renderer->DrawString("start", Vector2(570, 550) , Vector4(1, 0, 0, 1));
+			renderer->DrawString("Server", Vector2(570, 350), Vector4(1, 0, 0, 1));
+			renderer->DrawString("Client", Vector2(570, 150), Vector4(1, 0, 0, 1));
+
+			Vector3 objPosmenu = menu->GetTransform().GetWorldPosition();
+			Vector3 camPosmenu = objPosmenu + menu->GetConstTransform().GetWorldOrientation() * Vector3(0,0,-20);
+
+			camPosmenu = (Matrix4::Translation(objPosmenu) * Matrix4::Rotation(180, Vector3{ 0,1,0 }) * Matrix4::Translation(-objPosmenu)) * camPosmenu;
+
+			Matrix4 tempmenu = Matrix4::BuildViewMatrix(camPosmenu, objPosmenu, Vector3(0, 1, 0));
+
+			Matrix4 modelMatmenu = tempmenu.Inverse();
+
+			Quaternion qmenu(modelMatmenu);
+			Vector3 anglesmenu = qmenu.ToEuler(); //nearly there now!
+
+			world->GetMainCamera()->SetPosition(camPosmenu);
+			world->GetMainCamera()->SetPitch(anglesmenu.x);
+			world->GetMainCamera()->SetYaw(anglesmenu.y);
+		}
 	}
+}
+
+void  TutorialGame::LockedMenu() {
+	
+		Vector3 objPosmenu = menu->GetTransform().GetWorldPosition();
+		Vector3 camPosmenu = objPosmenu + menu->GetConstTransform().GetWorldOrientation() * lockedOffset;
+
+		camPosmenu = (Matrix4::Translation(objPosmenu) * Matrix4::Rotation(180, Vector3{ 0,1,0 }) * Matrix4::Translation(-objPosmenu)) * camPosmenu;
+
+		Matrix4 tempmenu = Matrix4::BuildViewMatrix(camPosmenu, objPosmenu, Vector3(0, 1, 0));
+
+		Matrix4 modelMatmenu = tempmenu.Inverse();
+
+		Quaternion qmenu(modelMatmenu);
+		Vector3 anglesmenu = qmenu.ToEuler(); //nearly there now!
+
+		world->GetMainCamera()->SetPosition(camPosmenu);
+		world->GetMainCamera()->SetPitch(anglesmenu.x);
+		world->GetMainCamera()->SetYaw(anglesmenu.y);
+	
 }
 
 
@@ -283,6 +442,7 @@ void TutorialGame::DebugObjectMovement() {
 	//If we've selected an object, we can manipulate it with some key presses
 	if (inSelectionMode && selectionObject) {
 		//Twist the selected object!
+		renderer->DrawString(selectionObject->GetName(), Vector2(100, 100), Vector4(1, 0, 0, 1));
 		if (Window::GetKeyboard()->KeyDown(KeyboardKeys::LEFT)) {
 			selectionObject->GetPhysicsObject()->AddTorque(Vector3(-10, 0, 0));
 		}
@@ -335,8 +495,33 @@ bool TutorialGame::SelectObject() {
 
 		if (Window::GetMouse()->ButtonDown(NCL::MouseButtons::LEFT)) {
 			if (selectionObject) {	//set colour to deselected;
-				selectionObject->GetRenderObject()->SetColour(Vector4(1, 1, 1, 1));
-				selectionObject = nullptr;
+				//selectionObject->GetRenderObject()->SetColour(Vector4(1, 1, 1, 1));
+				
+				if (selectionObject->GetName() == "start") {
+					start = true;
+					inSelectionMode = false;
+					Window::GetWindow()->ShowOSPointer(false);
+					Window::GetWindow()->LockMouseToWindow(true);
+				}
+				if (selectionObject->GetName() == "server") {
+					Server();
+					start = true;
+					isNetworked = true;
+					isServer = true;
+					inSelectionMode = false;
+					Window::GetWindow()->ShowOSPointer(false);
+					Window::GetWindow()->LockMouseToWindow(true);
+
+				}	if (selectionObject->GetName() == "client") {
+					Client();
+					start = true;
+					isNetworked = true;
+					isClient = true;
+					inSelectionMode = false;
+					Window::GetWindow()->ShowOSPointer(false);
+					Window::GetWindow()->LockMouseToWindow(true);
+				}
+				//selectionObject = nullptr;
 			}
 
 			Ray ray = CollisionDetection::BuildRayFromMouse(*world->GetMainCamera());
@@ -345,7 +530,7 @@ bool TutorialGame::SelectObject() {
 			RayCollision closestCollision;
 			if (world->Raycast(ray, closestCollision, true)) {
 				selectionObject = (GameObject*)closestCollision.node;
-				selectionObject->GetRenderObject()->SetColour(Vector4(0, 1, 0, 1));
+				//selectionObject->GetRenderObject()->SetColour(Vector4(0, 1, 0, 1));
 				//	Debug::DrawLine(selectionObject->GetTransform().GetLocalPosition(), selectionObject->GetTransform().GetLocalPosition() +Vector3(0,0,10), Vector4(1, 0, 0, 1));
 
 					//////////////////////////////
@@ -430,6 +615,7 @@ void TutorialGame::InitWorld() {
 	world->ClearAndErase();
 	physics->Clear();
 
+	AddMenuToWorld(Vector3(0, 100, 0), Vector3(40, 30, 1));
 	//InitMixedGridWorld(10, 10, 3.5f, 3.5f);
 	goose = AddGooseToWorld(Vector3(270, 5, 270));
 	AddAppleToWorld(Vector3(250, 5, 250));
@@ -468,19 +654,62 @@ GameObject* TutorialGame::AddCubeToWorld(const Vector3& position, Vector3 dimens
 
 	return cube;
 }
-
-GameObject* TutorialGame::AddTrigger(const Vector3& position, Vector3 dimensions) {
-	GameObject* cube = new GameObject("trigger");
+GameObject* TutorialGame::AddButtonToWorld(const Vector3& position, Vector3 dimensions, string name) {
+	GameObject* cube = new GameObject(name);
 
 	AABBVolume* volume = new AABBVolume(dimensions);
-	
 	cube->SetBoundingVolume((CollisionVolume*)volume);
 
 	cube->GetTransform().SetWorldPosition(position);
 	cube->GetTransform().SetWorldScale(dimensions);
 
-	cube->SetRenderObject(new RenderObject(&cube->GetTransform(), cubeMesh, nullptr, basicShader));
+	cube->SetRenderObject(new RenderObject(&cube->GetTransform(), cubeMesh, basicTex, basicShader));
+	cube->SetPhysicsObject(new PhysicsObject(&cube->GetTransform(), cube->GetBoundingVolume()));
+	cube->GetRenderObject()->SetColour(Vector4(0,0, 0, 1));
+	cube->GetPhysicsObject()->SetInverseMass(0);
+	cube->GetPhysicsObject()->InitCubeInertia();
+	world->AddGameObject(cube);
+	
+	return cube;
+}
+GameObject* TutorialGame::AddMenuToWorld(const Vector3& position, Vector3 dimensions) {
+	menu = new GameObject("menu");
 
+	AABBVolume* volume = new AABBVolume(dimensions);
+	//OBBVolume* volume = new OBBVolume(dimensions);
+	menu->SetBoundingVolume((CollisionVolume*)volume);
+
+	menu->GetTransform().SetWorldPosition(position);
+	menu->GetTransform().SetWorldScale(dimensions);
+
+	menu->SetRenderObject(new RenderObject(&menu->GetTransform(), cubeMesh, basicTex, basicShader));
+	menu->SetPhysicsObject(new PhysicsObject(&menu->GetTransform(), menu->GetBoundingVolume()));
+	menu->GetRenderObject()->SetColour(Vector4(1, 1, 1, 1));
+	menu->GetPhysicsObject()->SetInverseMass(0);
+	menu->GetPhysicsObject()->InitCubeInertia();
+
+	world->AddGameObject(menu);
+	AddButtonToWorld(position-Vector3(0,-5,0), Vector3(5, 1, 4), "start");
+	renderer->DrawString("start", Vector2(0,0), Vector4(1, 0, 0, 1)); // draw debug text at 10, 20
+	AddButtonToWorld(position - Vector3(0, 0, 0), Vector3(5, 1, 4), "server");
+	renderer->DrawString("server", Vector2(position.x, position.y), Vector4(1, 0, 0, 1)); // draw debug text at 10, 20
+	AddButtonToWorld(position - Vector3(0, 5, 0), Vector3(5, 1, 4), "client");
+	renderer->DrawString("client", Vector2(position.x, position.y), Vector4(1, 0, 0, 1)); // draw debug text at 10, 20
+	return menu;
+}
+
+GameObject* TutorialGame::AddTrigger(const Vector3& position, Vector3 dimensions) {
+	GameObject* cube = new GameObject("trigger");
+
+	AABBVolume* volume = new AABBVolume(dimensions);
+
+	cube->SetBoundingVolume((CollisionVolume*)volume);
+
+	cube->GetTransform().SetWorldPosition(position);
+	cube->GetTransform().SetWorldScale(dimensions);
+
+	//	cube->SetRenderObject(new RenderObject(&cube->GetTransform(), cubeMesh, nullptr, nullptr));
+	//	cube->GetRenderObject()->SetColour(Vector4(1, 1, 1, 0));
 	cube->SetPhysicsObject(new PhysicsObject(&cube->GetTransform(), cube->GetBoundingVolume()));
 	cube->GetPhysicsObject()->SetInverseMass(0);
 	world->AddGameObject(cube);
@@ -505,7 +734,7 @@ void TutorialGame::BuildWalls() {
 
 void TutorialGame::BuildTrees() {
 
-	
+
 	AddTrunk(Vector3(0, 6, 0), Vector3(1, 6, 1), 0);
 	AddLeaves(Vector3(0, 18, 0), 3, 0);
 	AddLeaves(Vector3(-1, 15, -1), 4, 0);
@@ -614,6 +843,7 @@ GameObject* TutorialGame::AddTrampoline(const Vector3& position, Vector3 dimensi
 	cube->SetPhysicsObject(new PhysicsObject(&cube->GetTransform(), cube->GetBoundingVolume()));
 	cube->GetRenderObject()->SetColour(Vector4(1, 0.1f, 0.1f, 1));
 	cube->GetPhysicsObject()->SetInverseMass(inverseMass);
+	cube->GetPhysicsObject()->SetElasticity(15);
 	cube->GetPhysicsObject()->InitCubeInertia();
 
 	world->AddGameObject(cube);
@@ -832,7 +1062,7 @@ void TutorialGame::BridgeConstraintTest() {
 
 	Vector3 startPos = Vector3(-20, 10, -20);
 
-	GameObject* start = AddCubeToWorld(startPos + Vector3(0, 0, 0), Vector3(2,10,2), 0);
+	GameObject* start = AddCubeToWorld(startPos + Vector3(0, 0, 0), Vector3(2, 10, 2), 0);
 
 	GameObject* end = AddCubeToWorld(startPos + Vector3((numLinks + 2) * cubeDistance, 0, 0), Vector3(2, 10, 2), 0);
 

@@ -2,6 +2,10 @@
 #include "GameTechRenderer.h"
 #include "../CSC8503Common/PhysicsSystem.h"
 #include "../CSC8503Common/NavigationGrid.h"
+#include "TestPacketReceiver.h"
+#include "../CSC8503Common/GameServer.h"
+#include "../CSC8503Common/GameClient.h"
+//#include "NetworkedGame.h"
 
 
 namespace NCL {
@@ -13,7 +17,7 @@ namespace NCL {
 
 			virtual void UpdateGame(float dt);
 
-			bool collected = false;
+			
 		protected:
 			void InitialiseAssets();
 
@@ -42,13 +46,45 @@ namespace NCL {
 			void DebugObjectMovement();
 			void LockedObjectMovement();
 			void LockedCameraMovement();
+			//menu
+			GameObject* AddMenuToWorld(const Vector3& position, Vector3 dimensions);
+			GameObject* AddButtonToWorld(const Vector3& position, Vector3 dimensions, string name);
+			void LockedMenu();
+			GameObject* menu;
+			bool start;
 			//////////////////////
 			bool collectApple(Vector3 fwdAxis);
 			//////////////////////
 			/////AI testing
 			void MoveAI();
+			void TestStateMachine();
+			vector<Vector3> testNodes;
+			float lerp(float v0, float v1, float t) {
+				return (1 - t) * v0 + t * v1;
+			}
+			int i;
+			float tempo = 0.0f;
+			bool* found=false;
+			int eventData = 0;
 			//////ai 
 
+			////networking
+			void TestNetworking(bool s);
+			void sentPackets(bool s);
+			
+			TestPacketReceiver* serverReceiver;
+			TestPacketReceiver* clientReceiver;
+			GameServer* server;
+			GameClient* client;
+
+			bool isNetworked;
+			bool isClient;
+			bool isServer;
+
+			void Client();
+			void Server();
+			bool clientConnected;
+			////
 			GameObject* AddFloorToWorld(const Vector3& position);
 			GameObject* AddSphereToWorld(const Vector3& position, float radius, float inverseMass = 10.0f);
 			GameObject* AddCubeToWorld(const Vector3& position, Vector3 dimensions, float inverseMass = 10.0f);
@@ -70,13 +106,16 @@ namespace NCL {
 			GameObject*         goose;
 			GameObject*			HomeBase;
 			GameObject*			keeper;
-			GameObject* trigger;
-			NavigationGrid* navGrid;
+			GameObject*			trigger;
+			NavigationGrid*		navGrid;
+			NavigationPath*		outPath;
 			GameObject* AddTrigger(const Vector3& position, Vector3 dimensions);
+
 			int points=0;
 
 			bool useGravity;
 			bool inSelectionMode;
+			bool collected = false;
 
 			float		forceMagnitude;
 

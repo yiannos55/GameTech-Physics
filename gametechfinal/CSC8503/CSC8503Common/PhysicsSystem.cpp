@@ -15,7 +15,7 @@ using namespace CSC8503;
 
 PhysicsSystem::PhysicsSystem(GameWorld& g) : gameWorld(g)	{
 	applyGravity	= false;
-	useBroadPhase	= false;	
+	useBroadPhase	= true;	
 	dTOffset		= 0.0f;
 	globalDamping	= 0.95f;
 	SetGravity(Vector3(0.0f, -9.8f, 0.0f));
@@ -47,6 +47,73 @@ void PhysicsSystem::Clear() {
 This is the core of the physics engine update
 
 */
+
+//int constraintIterationCount = 10;
+//
+//void PhysicsSystem::Update(float dt) {
+//	if (Window::GetKeyboard()->KeyPressed(KeyboardKeys::I)) {
+//		constraintIterationCount--;
+//		std::cout << "Setting constraint iterations to " << constraintIterationCount << std::endl;
+//	}
+//	if (Window::GetKeyboard()->KeyPressed(KeyboardKeys::O)) {
+//		constraintIterationCount++;
+//		std::cout << "Setting constraint iterations to " << constraintIterationCount << std::endl;
+//	}
+//	triggers.clear();
+//	dTOffset += dt; //We accumulate time delta here - there might be remainders from previous frame!
+//
+//	float idealFrameRate = 60;							//this is the framerate we'd like to maintain kplzthx
+//	float idealIterations = idealFrameRate * 2;			//we want n per second;
+//
+//	int perFrameIts = (int)(idealIterations / idealFrameRate);
+//
+//	float iterationDt = 1.0f / idealIterations;				//So each iteration we'll get an advance of this time
+//	float currentFrameRate = 1.0f / dt;							//what's our current fps?
+//
+//	int realIterations = (int)(dTOffset / iterationDt);				//how many iterations of the desired dt can we actually fit in our timestep?
+//
+//	if (currentFrameRate < idealFrameRate * 0.5f) {
+//		iterationDt = dTOffset; //run one big update if the framerate tanks
+//	}
+//	else if (realIterations > perFrameIts + 1) { //+1 as we sometimes accumulate an extra frame to take up the leftover time
+//		//UH OH, we're accumulating too much time from somewhere, half the iteration count
+//		//Probably caused by not being able to quite maintain the fps
+//		iterationDt *= 2;
+//	}
+//
+//	if (useBroadPhase) {
+//		UpdateObjectAABBs();
+//	}
+//	int iteratorCount = 0;
+//	while (dTOffset >= iterationDt) {
+//		IntegrateAccel(iterationDt); //Update accelerations from external forces
+//		if (useBroadPhase) {
+//			BroadPhase();
+//			NarrowPhase();
+//		}
+//		else {
+//			BasicCollisionDetection();
+//		}
+//
+//		//This is our simple iterative solver - 
+//		//we just run things multiple times, slowly moving things forward
+//		//and then rechecking that the constraints have been met		
+//		float constraintDt = iterationDt / (float)constraintIterationCount;
+//		for (int i = 0; i < constraintIterationCount; ++i) {
+//			UpdateConstraints(constraintDt);
+//		}
+//		IntegrateVelocity(iterationDt); //update positions from new velocity changes
+//
+//		dTOffset -= iterationDt;
+//		iteratorCount++;
+//	}
+//
+//	ClearForces();	//Once we've finished with the forces, reset them to zero
+//
+//	UpdateCollisionList(); //Remove any old collisions
+//}
+
+
 void PhysicsSystem::Update(float dt) {
 	GameTimer testTimer;
 	triggers.clear();
@@ -188,10 +255,7 @@ void PhysicsSystem::BasicCollisionDetection() {
 					}
 				}
 				else {
-					//	std::cout	<< "collision between" << (*i)->GetName()
-					//	<< "and" << (*j)->GetName() << std::endl;
 					ImpulseResolveCollision(*info.a, *info.b, info.point);
-					//SpringResolve(*info.a, *info.b, info.point);
 					info.framesLeft = numCollisionFrames;
 					allCollisions.insert(info);
 				}
@@ -246,21 +310,9 @@ void PhysicsSystem::ImpulseResolveCollision(GameObject& a, GameObject& b, Collis
 		
 	Vector3 contactVelocity = fullVelocityB - fullVelocityA;
 
-	float impulseForce = Vector3::Dot(contactVelocity, p.normal);
+	float impulseForce = Vector3::Dot(contactVelocity, p.normal)*((physA->GetElasticity())*(physB->GetElasticity()));
 
 	if (impulseForce > 0) {
-		return;
-	}
-
-	////////////////////////////trampoline force-->
-	if (a.GetName() == "trampoline"||b.GetName()=="trampoline") {
-		physA->ApplyLinearImpulse(Vector3(0, 50, 0));
-		physB->ApplyLinearImpulse(Vector3(0, 50, 0));
-		return;
-	}
-	if (a.GetName() == "base" || b.GetName() == "apple") {
-		/*physA->ApplyLinearImpulse(Vector3(0, 50, 0));
-		physB->ApplyLinearImpulse(Vector3(0, 50, 0));*/
 		return;
 	}
 
@@ -331,6 +383,16 @@ void PhysicsSystem::NarrowPhase() {
 	for (std::set<CollisionDetection::CollisionInfo>::iterator i = broadphaseCollisions.begin(); i != broadphaseCollisions.end(); ++i) {
 		CollisionDetection::CollisionInfo info = *i;
 		if (CollisionDetection::ObjectIntersection(info.a, info.b, info)) {
+			if (info.a->GetName() == "trigger" || info.b->GetName() == "trigger") {
+				
+				info.framesLeft = numCollisionFrames;
+				if (info.a->GetName() == "trigger") {
+					triggers.insert(info.b);
+				}
+				else {
+					triggers.insert(info.a);
+				}
+			}
 			info.framesLeft = numCollisionFrames;
 			ImpulseResolveCollision(*info.a, *info.b, info.point);
 			allCollisions.insert(info);
