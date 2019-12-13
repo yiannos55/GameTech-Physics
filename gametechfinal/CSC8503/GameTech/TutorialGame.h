@@ -39,6 +39,7 @@ namespace NCL {
 
 			void BuildWalls();
 			void BuildBase();
+			void AddApples();
 			void BuildTrees();
 			void BuildTrampolines();
 			bool SelectObject();
@@ -46,6 +47,8 @@ namespace NCL {
 			void DebugObjectMovement();
 			void LockedObjectMovement();
 			void LockedCameraMovement();
+			void BuildSpeedBalls();
+
 			//menu
 			GameObject* AddMenuToWorld(const Vector3& position, Vector3 dimensions);
 			GameObject* AddButtonToWorld(const Vector3& position, Vector3 dimensions, string name);
@@ -110,7 +113,7 @@ namespace NCL {
 			NavigationGrid*		navGrid;
 			NavigationPath*		outPath;
 			GameObject* AddTrigger(const Vector3& position, Vector3 dimensions);
-
+			GameObject* AddSpeedBall(const Vector3& position, float radius, float inverseMass);
 			int points=0;
 
 			bool useGravity;

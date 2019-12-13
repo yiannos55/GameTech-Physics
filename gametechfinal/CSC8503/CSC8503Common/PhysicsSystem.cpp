@@ -18,7 +18,7 @@ PhysicsSystem::PhysicsSystem(GameWorld& g) : gameWorld(g)	{
 	useBroadPhase	= true;	
 	dTOffset		= 0.0f;
 	globalDamping	= 0.95f;
-	SetGravity(Vector3(0.0f, -9.8f, 0.0f));
+	SetGravity(Vector3(0.0f, -15.8f, 0.0f));
 }
 
 PhysicsSystem::~PhysicsSystem()	{
@@ -248,6 +248,25 @@ void PhysicsSystem::BasicCollisionDetection() {
 
 					info.framesLeft = numCollisionFrames;
 					if ((*i)->GetName() == "trigger") {
+						triggers.insert(*j);
+					}
+					else {
+						triggers.insert(*i);
+					}
+				}
+				if ((*i)->GetName() == "speedBall" || (*j)->GetName() == "speedBall") {
+
+					info.framesLeft = numCollisionFrames;
+					if ((*i)->GetName() == "speedBall") {
+						triggers.insert(*j);
+					}
+					else {
+						triggers.insert(*i);
+					}
+				}
+				if ((*i)->GetName() == "keeper" || (*j)->GetName() == "keeper") {
+					info.framesLeft = numCollisionFrames;
+					if ((*i)->GetName() == "speedBall") {
 						triggers.insert(*j);
 					}
 					else {
